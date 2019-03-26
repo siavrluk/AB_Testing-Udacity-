@@ -1,0 +1,191 @@
+---
+title: "A/B Testing (Udacity Final Project)"
+author: "Silvana Avramska-Lukarska"
+date: "March 26, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# 1. Experiment Overview
+
+Udacity tested a change where if the student clicked "Start free trial", they were asked how much time they had available to devote to the course. If the student indicated 5 or more hours per week, they would be taken through the checkout process as usual. If they indicated fewer than 5 hours per week, a message would appear indicating that Udacity courses usually require a greater time commitment for successful completion, and suggesting that the student might like to access the course materials for free. At this point, the student would have the option to continue enrolling in the free trial, or access the course materials for free instead.
+
+The hypothesis was that this might set clearer expectations for students upfront, thus reducing the number of frustrated students who left the free trial because they didn't have enough time—without significantly reducing the number of students to continue past the free trial and eventually complete the course. If this hypothesis held true, Udacity could improve the overall student experience and improve coaches' capacity to support students who are likely to complete the course.
+
+
+# 2. Metric Choice
+
+For any good experiment, we need two types of metrics: invariant and evaluation metrics. The first ones are used for sanity check and makes sure that the design of the experiment is correct. They should not change throughout the experiment. The evaluation metrics on the other hand, are the ones that should measure the size of the effect of the experiment. 
+We will use the "Number of cookies" and "Number of clicks" as invariant metrics, and "Gross conversion", "Retention" and "Net conversion" as evaluation metrics. 
+
+The definitions of these metrics and the corresponding minimal practical signifficance level for each of them are as follows:
+
+## 2.1. Invariant Metrics
+
+* Number of cookies: number of unique cookies to view the course overview page. (dmin=3000)
+* Number of clicks: number of unique cookies to click the "Start free trial" button (happens before the free trial screener is trigger). (dmin=240)
+
+## 2.2. Evaluation Metrics 
+
+* Gross conversion: number of user-ids to complete checkout and enroll in the free trial divided by number of unique cookies to click the "Start free trial" button. (dmin= 0.01)
+
+* Retention: number of user-ids to remain enrolled past the 14-day boundary (and thus make at least one payment) divided by number of user-ids to complete checkout. (dmin=0.01)
+
+* Net conversion: number of user-ids to remain enrolled past the 14-day boundary (and thus make at least one payment) divided by the number of unique cookies to click the "Start free trial" button. (dmin= 0.0075)
+
+Since this experiment is designed to measure the number of "frustrated" and the number of "resolute" stundets, we expect to see a decrease in the Gross conversion coupled with increase in the Net conversion, and/or increase in Retention.
+
+# 3. Evaluation Metrics Variability 
+
+Here we are asked to estimate analytically the standard deviation of each of the evaluation metrics we will use. The rough estimates of the baseline values for this metrics are the following:
+
+Unique cookies to view course overview page per day: 40000
+
+Unique cookies to click "Start free trial" per day:3200
+
+Enrollments per day: 660
+
+Click-through-probability on "Start free trial": 0.08
+
+Probability of enrolling, given click: 0.20625
+
+Probability of payment, given enroll: 0.53
+
+Probability of payment, given click: 0.1093125
+
+
+
+Note that we need to estimate the standard deviation of the evaluation metrics assuming a sample size of 5000 cookies visiting the page per day. Thus, we first need to scale the collected counts estimates.
+
+* Gross conversion 
+
+The unit of analysis here is the number of clicks. We will assume that the metric is binomially distributed. 
+
+
+```{r}
+n_cl <- 3200/40000 * 5000
+p_enroll_w_click <- 0.20625
+SE_gross <- sqrt(p_enroll_w_click * (1 - p_enroll_w_click) * 1/n_cl)
+```
+
+Thus the standard deviation of the Gross conversion metric is 0.0202.
+
+* Retention
+
+The unit of analysis in this case is number of enrollments. Again we assume binomial distribution.
+
+```{r}
+n_enr <- 660/40000 * 5000
+p_pay_w_enroll <- 0.53
+SE_ret <- sqrt(p_pay_w_enroll * (1 - p_pay_w_enroll) * 1/n_enr)
+```
+
+The standard deviation of the Retention is 0.0549.
+
+* Net conversion
+
+Similarly we get
+
+```{r}
+p_pay_w_click <- 0.1093125
+SE_net <- sqrt(p_pay_w_click * (1 - p_pay_w_click) * 1/n_cl)
+```
+
+The standard deviation of the Net conversion is 0.0156.
+
+Note that the analytical estimate of the standard deviation is near the empirical one when the unit of diversion and unit of analysis are the same. This is the case with Gross and Net conversion metrics, but not with the Retention. Thus, if we decide to use Retention, we should calculate the empirical variability.
+
+# 4. Experiment Size
+
+Next we need to determine the minimal number of samples we need so that our experiment will have enough statistical power. We will use the following [calculator](http://www.evanmiller.org/ab-testing/sample-size.html) with a significance level $\alpha = 0.05$ and power $(1 - \beta)$ with $\beta = 0.2$.
+
+We get the following
+
+* Gross conversion: with baseline conversion rate 20.625% and minimum detectable effect of 1%, we need 25,835 clicks per group. For the whole experiment we need to double that number, i.e. we need 51,670 clicks and this corresponds to 645,875 pageviews.
+
+* Retention: with baseline conversion rate 53% and minimum detectable effect of 1%, we need 39,115 enrollments per group, and thus 78,230 enrollments for the whole experiment. This corresponds to 4,741,212 pageviews!
+
+* Net conversion:  with baseline conversion rate 10.93125% and minimum detectable effect of 0.75%, we need 27413 clicks per group and thus 54,826 clicks in total. This corresponds to 685,325 pageviews.
+
+Thus, if we decide to use all of the above metrics, we will need a minimum of 4,741,212 pageviews. If we divert 100% of the traffic, given that there are 40,000 pageviews per day, we will need 119 days to run the experiment. This is too long! Therefore, we will drop the Retention metric and will work with Gross and Net conversions only. In this case we will need 685,325 pageview which is equivalent to running the experiment for 18 days with 100% diverted traffic. 
+
+
+# 5. Experiment Analysis
+
+```{r Load data}
+CG <- read.csv('Control.csv')
+TG <- read.csv('Experiment.csv')
+```
+
+## 5.1. Sanity check
+
+Next we compute a 95% confidence interval for each of the invariant metrics.
+
+* Number of cookies: we assume binomial distribution
+
+```{r Cookies}
+p_obs <- sum(CG$Pageviews)/(sum(TG$Pageviews) + sum(CG$Pageviews))
+p <- 0.5
+SE_cookies <- sqrt(p*(1-p)/(sum(CG$Pageviews) + sum(TG$Pageviews)))
+m_cookies <- 1.96 * SE_cookies
+```
+
+Thus the 95% CI for the number of cookies is [0.4988, 0.5012]. Since the observed value 0.5006 falls within this interval, it passes the sanity check.
+
+* Number of clicks: analogously we get
+
+```{r Clicks}
+p_obs <- sum(CG$Clicks)/(sum(CG$Clicks) + sum(TG$Clicks))
+SE_clicks <- sqrt(p*(1-p)/(sum(CG$Clicks) + sum(TG$Clicks)))
+m_clicks <- 1.96 * SE_clicks
+```
+
+The 95% CI for the number of clicks is [0.4959, 0.5041], and the observed value is 0.5005. Thus the sanity check is passed again.
+
+
+## 5.2. Effect size
+
+Since we have data about the number of enrollments and number of payments only for the first 23 days, we will only use data about the number of pageviews and clicks on these 23 days.
+
+```{r filtered data}
+CG <- CG[!is.na(CG$Payments), ]
+TG <- TG[!is.na(TG$Payments), ]
+```
+
+* Gross conversion
+
+```{r Gross}
+d_gross <- sum(TG$Enrollments)/sum(TG$Clicks) - sum(CG$Enrollments)/sum(CG$Clicks)
+
+p_gross_pooled <- (sum(CG$Enrollments) + sum(TG$Enrollments)) / (sum(CG$Clicks) + sum(TG$Clicks))
+SE_gross_pooled <- sqrt(p_gross_pooled * (1-p_gross_pooled)*(1/sum(CG$Clicks) + 1/sum(TG$Clicks)))
+m_gross <- 1.96 * SE_gross_pooled
+```
+
+The difference between the Gross conversion rate of the treatment group and the control group is -0.0205, and the 95% CI around it is [-0.0291, -0.0120]. Since it does not contain 0, the result is statistically significant. Since it also does not contain the minimal practical difference -0.01, it is also practically significant.
+
+* Net conversion
+
+```{r Net}
+d_net <- sum(TG$Payments)/sum(TG$Clicks) - sum(CG$Payments)/sum(CG$Clicks)
+
+p_net_pooled <- (sum(CG$Payments) + sum(TG$Payments)) / (sum(CG$Clicks) + sum(TG$Clicks))
+SE_net_pooled <- sqrt(p_net_pooled * (1-p_net_pooled) * (1/sum(CG$Clicks) + 1/sum(TG$Clicks)))
+m_net <- 1.96 * SE_net_pooled
+```
+
+The difference between the Net conversion rate of the treatment group and the control group is -0.0049, and the 95% CI around it is [-0.0116, 0.0019]. Since it contains both 0 and the minimal practical difference 0.075, the result is neither statistically nor practically significant. 
+
+
+## 5.3. Sign Test
+
+* Gross convertion: on 4 out of 23 days the gross conversion rate in the treatment group is higher than the one in the control group. Using [this calculator](https://www.graphpad.com/quickcalcs/binomial1/), we find that the corresponding p-value is 0.0026, which is smaller than $\alpha=0.05$ and thus it confirms the statistical significance of the result.
+
+* Net convertion: on 10 out of 23 days the Net conversion rate in the treatment group is higher than the one in the control group. Using the same calculator as above, we find that the corresponding p-value is 0.6776, which is bigger than $\alpha=0.05$ and thus it confirms the statistical insignificance of the result.
+
+
+# 6. Recommendation
+
+At this point, since we saw a statistical and practical significance of only one of the evaluation metrics, I would not recommend launching the experiment. 
